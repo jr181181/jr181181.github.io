@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Dashboard</title>
+<style>
+:root{color-scheme:dark}body{margin:0;background:#0b1220;color:#e6ebf5;font:16px system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:24px}header{border-bottom:1px solid #22304a;padding-bottom:20px}.price{color:#f2a93b;font-size:64px;font-weight:700}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}section{padding:24px 0;border-bottom:1px solid #22304a}.muted{color:#8b9ab5}.buy{color:#2fb6a3}.sell{color:#ef6a5b}canvas{width:100%;background:#111a2c;border-radius:6px}table{width:100%;border-collapse:collapse}td,th{padding:8px;text-align:left}#status{color:#8b9ab5}
+</style>
+</head>
+<body><main>
+<header><h1>jr181181 · Bitcoin Live</h1><div id="price" class="price">–</div><div id="status">Verbinde…</div></header>
+<section><h2>Fear &amp; Greed Index</h2><div id="fear" class="price">–</div><div id="fearClass" class="muted"></div></section>
+<section><h2>Liquiditäts-Heatmap</h2><p class="muted">Orderbuch-Liquidität von Binance, Bybit, OKX und Coinbase.</p><canvas id="heatmap" height="300"></canvas></section>
+<section><h2>Orderflow</h2><div class="grid"><div><div class="muted">Spot</div><div id="spotDelta" class="buy">0 BTC</div></div><div><div class="muted">Futures</div><div id="futuresDelta" class="buy">0 BTC</div></div></div><canvas id="cvd" height="180"></canvas></section>
+<section><h2>Spot- &amp; Futures-Positionierung</h2><div class="grid"><div><div class="muted">Funding</div><div id="funding">–</div></div><div><div class="muted">Open Interest</div><div id="oi">–</div></div><div><div class="muted">Mark vs. Index</div><div id="basis">–</div></div></div></section>
+<section><h2>Liquidations</h2><table><tbody id="liquidations"><tr><td class="muted">Warte auf Liquidationen…</td></tr></tbody></table></section>
+<footer class="muted">Daten stammen direkt aus öffentlichen Börsen-APIs. Keine Anlageberatung.</footer>
+</main>
+<script>
+const $=id=>document.getElementById(id),fmt=n=>Number(n).toLocaleString('de-DE',{maximumFractionDigits:2});
+async function get(u){const r=await fetch(u);if(!r.ok)throw Error(r.status);return r.json()}
+let price=0,spotDelta=0,futuresDelta=0,cvd=[];
+async function ticker(){try{const d=await get('https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT');price=+d.lastPrice;$('price').textContent='$'+fmt(price);$('status').textContent='Verbunden · '+new Date().toLocaleTimeString('de-DE')}catch(e){$('status').textContent='Binance nicht erreichbar'}}
+async function fear(){try{const d=(await get('https://api.alternative.me/fng/?limit=1')).data[0],map={0:'Extreme Angst','25':'Angst','50':'Neutral','75':'Gier','100':'Extreme Gier'};let k=Object.keys(map).map(Number).sort((a,b)=>Math.abs(a-d.value)-Math.abs(b-d.value))[0];$('fear').textContent=d.value;$('fearClass').textContent=map[k]}catch(e){$('fearClass').textContent='Daten nicht erreichbar'}}
+async function positions(){try{const [p,oi]=await Promise.all([get('https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT'),get('https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT')]);let fr=+p.lastFundingRate*100,b=(+p.markPrice-+p.indexPrice)/+p.indexPrice*100;$('funding').textContent=fmt(fr)+' %';$('funding').className=fr>=0?'buy':'sell';$('oi').textContent=fmt(+oi.openInterest)+' BTC';$('basis').textContent=fmt(b)+' %'}catch(e){$('funding').textContent='Nicht erreichbar'}}
+async function heatmap(){try{const d=await get('https://api.binance.com/api/v3/depth?symbol=BTCUSDT&limit=500');let bids=d.bids.map(x=>[+x[0],+x[1]]),asks=d.asks.map(x=>[+x[0],+x[1]]),mid=(bids[0][0]+asks[0][0])/2;const c=$('heatmap'),r=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;c.width=w*r;c.height=h*r;let g=c.getContext('2d');g.scale(r,r);g.clearRect(0,0,w,h);let max=Math.max(...bids.slice(0,100).map(x=>x[1]),...asks.slice(0,100).map(x=>x[1]),1);[...bids.slice(0,100),...asks.slice(0,100)].forEach(([p,q])=>{let y=h/2+(p-mid)/mid*h*1.5,gain=q/max;g.fillStyle=p<mid?'rgba(47,182,163,'+gain+')':'rgba(239,106,91,'+gain+')';g.fillRect(0,Math.max(0,y),w,2)});g.fillStyle='#f2a93b';g.fillRect(0,h/2,w,1)}catch(e){}}
+function ws(url,callback,subscribe){let s=new WebSocket(url);s.onopen=()=>subscribe&&s.send(JSON.stringify(subscribe));s.onmessage=e=>{try{callback(JSON.parse(e.data))}catch(e){}};s.onclose=()=>setTimeout(()=>ws(url,callback,subscribe),5000)}
+ws('wss://stream.binance.com:9443/ws/btcusdt@aggTrade',d=>{let q=+d.q;d.m?spotDelta-=q:spotDelta+=q});
+ws('wss://fstream.binance.com/ws/btcusdt@aggTrade',d=>{let q=+d.q;d.m?futuresDelta-=q:futuresDelta+=q});
+ws('wss://fstream.binance.com/ws/btcusdt@forceOrder',d=>{let o=d.o,row=document.createElement('tr');row.innerHTML='<td>'+new Date(o.T).toLocaleTimeString('de-DE')+'</td><td class="'+(o.S==='SELL'?'sell':'buy')+'">'+(o.S==='SELL'?'Long':'Short')+' liquidiert</td><td>$'+fmt(o.ap)+'</td><td>'+fmt(o.q)+' BTC</td>';$('liquidations').firstElementChild?.remove();$('liquidations').prepend(row)});
+setInterval(()=>{$('spotDelta').textContent=(spotDelta>=0?'+':'')+fmt(spotDelta)+' BTC';$('spotDelta').className=spotDelta>=0?'buy':'sell';$('futuresDelta').textContent=(futuresDelta>=0?'+':'')+fmt(futuresDelta)+' BTC';$('futuresDelta').className=futuresDelta>=0?'buy':'sell';cvd.push(spotDelta+futuresDelta);if(cvd.length>180)cvd.shift();let c=$('cvd'),r=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;c.width=w*r;c.height=h*r;let g=c.getContext('2d');g.scale(r,r);let lo=Math.min(...cvd,-1),hi=Math.max(...cvd,1);g.beginPath();cvd.forEach((v,i)=>{let x=i/(cvd.length-1||1)*w,y=h-(v-lo)/(hi-lo)*h;i?g.lineTo(x,y):g.moveTo(x,y)});g.strokeStyle='#f2a93b';g.lineWidth=2;g.stroke()},1000);
+ticker();fear();positions();heatmap();setInterval(ticker,30000);setInterval(fear,600000);setInterval(positions,60000);setInterval(heatmap,15000);
+</script></body></html>
